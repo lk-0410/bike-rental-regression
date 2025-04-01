@@ -55,10 +55,10 @@ bike-rental-regression/
 
 ## 📸 Visuals
 ### 🔵 Correlation Matrix
-![Correlation Matrix](images/correlation_matrix.png)
+![Correlation Matrix]
 
 ### 🔵 Q-Q Plot
-![QQ Plot](images/qq_plot.png)
+![QQ Plot]
 
 ---
 
