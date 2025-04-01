@@ -1,0 +1,194 @@
+---
+title: "Project Regression"
+author: "Lava"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(car)
+library(lmtest)
+library(corrplot)
+library(caret)
+library(MASS)
+
+# Read data
+bike_data <- read.csv("C:/Users/Lava/OneDrive/Regression/bike+sharing+dataset (1)/day.csv")
+
+# 1. Initial Data Exploration
+# Structure and summary
+str(bike_data)
+summary(bike_data)
+
+# Correlation matrix visualization
+numeric_vars <- bike_data %>% select_if(is.numeric)
+correlation_matrix <- cor(numeric_vars)
+corrplot(correlation_matrix, method = "color")
+
+# Distribution of response variable
+ggplot(bike_data, aes(x = cnt)) +
+  geom_histogram(bins = 30) +
+  theme_minimal() +
+  labs(title = "Distribution of Bike Rentals")
+
+# 2. Feature Engineering
+bike_data <- bike_data %>%
+  mutate(
+    log_cnt = log(cnt + 1),
+    temp_squared = temp^2,
+    season = factor(season),
+    weathersit = factor(weathersit),
+    temp_hum_interaction = temp * hum
+  )
+
+# 3. Initial Model
+initial_model <- lm(cnt ~ temp + atemp + hum + windspeed + 
+                   factor(season) + factor(weathersit) + 
+                   holiday + workingday, data = bike_data)
+
+# Initial model diagnostics
+summary(initial_model)
+dwtest(initial_model)
+bptest(initial_model)
+vif(initial_model)
+
+# Initial model plots
+par(mfrow = c(2,2))
+plot(initial_model)
+par(mfrow = c(1,1))
+
+# Cook's distance plot
+plot(cooks.distance(initial_model), type = "h", 
+     main = "Cook's Distance", ylab = "Cook's Distance")
+abline(h = 1, col = "red")
+
+# Identify outliers
+outliers <- which(cooks.distance(initial_model) > 1)
+print("Potential outliers:")
+print(bike_data[outliers, ])
+
+# 4. Transformed Model
+transformed_model <- lm(log_cnt ~ temp + atemp + hum + windspeed + 
+                       factor(season) + factor(weathersit) + 
+                       holiday + workingday, data = bike_data)
+
+# Transformed model diagnostics
+summary(transformed_model)
+dwtest(transformed_model)
+bptest(transformed_model)
+vif(transformed_model)
+
+# Plot residuals for transformed model
+ggplot(data.frame(fitted = fitted(transformed_model),
+                 residuals = resid(transformed_model)), 
+       aes(x = fitted, y = residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  geom_smooth(method = "loess") +
+  theme_minimal() +
+  labs(title = "Residuals vs Fitted Values (Transformed Model)")
+
+# 5. Advanced Model with Feature Engineering
+full_model <- lm(cnt ~ temp + temp_squared + atemp + hum + 
+                 windspeed + season + weathersit + holiday + 
+                 workingday + temp_hum_interaction, data = bike_data)
+
+# Stepwise selection
+step_model <- stepAIC(full_model, direction = "both")
+summary(step_model)
+
+# 6. Cross-Validation
+set.seed(123)
+train_control <- trainControl(method = "cv", number = 10)
+cv_model <- train(cnt ~ temp + temp_squared + atemp + hum + 
+                 windspeed + season + weathersit + holiday + 
+                 workingday + temp_hum_interaction,
+                 data = bike_data,
+                 method = "lm",
+                 trControl = train_control)
+print(cv_model)
+
+# 7. Model Comparison Function
+compare_models <- function(models_list) {
+  results <- lapply(models_list, function(model) {
+    c(R2 = summary(model)$r.squared,
+      AdjR2 = summary(model)$adj.r.squared,
+      AIC = AIC(model),
+      BIC = BIC(model),
+      RMSE = sqrt(mean(resid(model)^2)))
+  })
+  return(do.call(rbind, results))
+}
+
+# Compare all models
+models_list <- list(
+  initial = initial_model,
+  transformed = transformed_model,
+  stepwise = step_model
+)
+
+comparison_results <- compare_models(models_list)
+print("Model Comparison Results:")
+print(comparison_results)
+
+# 8. Validation Metrics
+validation_metrics <- function(model) {
+  predictions <- predict(model)
+  RMSE <- sqrt(mean((bike_data$cnt - predictions)^2))
+  MAE <- mean(abs(bike_data$cnt - predictions))
+  R2 <- cor(bike_data$cnt, predictions)^2
+  
+  return(c(RMSE = RMSE, MAE = MAE, R2 = R2))
+}
+
+# Apply metrics to all models
+model_metrics <- lapply(models_list, validation_metrics)
+print("Validation Metrics for Each Model:")
+print(do.call(rbind, model_metrics))
+
+# 9. Predictions and Intervals
+# Example with first 5 observations
+new_data <- bike_data[1:5, ]
+predictions_initial <- predict(initial_model, newdata = new_data, 
+                             interval = "prediction")
+predictions_transformed <- exp(predict(transformed_model, 
+                             newdata = new_data, 
+                             interval = "prediction")) - 1
+predictions_step <- predict(step_model, newdata = new_data, 
+                          interval = "prediction")
+
+# Print predictions
+print("Predictions from Different Models:")
+print("Initial Model:")
+print(predictions_initial)
+print("Transformed Model (back-transformed):")
+print(predictions_transformed)
+print("Stepwise Model:")
+print(predictions_step)
+
+# 10. Final Diagnostic Plots
+# Residual plots for final model (using step_model as final)
+final_diagnostics <- ggplot(data.frame(fitted = fitted(step_model),
+                                     residuals = resid(step_model)), 
+                          aes(x = fitted, y = residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  geom_smooth(method = "loess") +
+  theme_minimal() +
+  labs(title = "Final Model: Residuals vs Fitted Values")
+print(final_diagnostics)
+
+# Q-Q plot for final model
+qq_plot <- ggplot(data.frame(residuals = resid(step_model)), 
+                 aes(sample = residuals)) +
+  stat_qq() +
+  stat_qq_line() +
+  theme_minimal() +
+  labs(title = "Final Model: Normal Q-Q Plot")
+print(qq_plot)
+```
+
+
